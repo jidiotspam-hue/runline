@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>runline</title>
+<title>runline — code editor that runs in your browser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2334a874'/%3E%3Cpath d='M12 9l10 7-10 7z' fill='%23081a10'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/dracula.min.css">
 <link rel="stylesheet" href="style.css">
@@ -12,58 +13,154 @@
 <header class="toolbar">
   <div class="brand">runline</div>
 
-  <select id="lang-select">
-    <option value="html">HTML</option>
+  <select id="lang-select" title="Language">
+    <option value="html">HTML / JS</option>
     <option value="python">Python</option>
     <option value="java">Java</option>
     <option value="cpp">C++</option>
   </select>
 
-  <div id="file-tabs" class="file-tabs" hidden></div>
+  <select id="project-select" title="Project" hidden></select>
 
-  <div id="python-mode-toggle" class="mode-toggle" hidden>
-    <button id="btn-mode-console" class="mode-btn active" title="Run once, show text output">Console</button>
-    <button id="btn-mode-play" class="mode-btn" title="Animated canvas game via Pyodide">Play</button>
+  <div class="menu" id="project-menu" hidden>
+    <button type="button" class="menu-btn">Project ▾</button>
+    <div class="menu-list">
+      <button type="button" data-action="new-project">New project</button>
+      <button type="button" data-action="rename-project">Rename project…</button>
+      <button type="button" data-action="download-zip">Download project (.zip)</button>
+      <button type="button" data-action="delete-project" class="danger">Delete project</button>
+    </div>
   </div>
 
-  <button id="btn-new">New</button>
-  <button id="btn-open">Open</button>
-  <input type="file" id="file-input" hidden accept=".html,.htm,.css,.js,.py,.java,.cpp,.cc,.cxx,.txt">
-  <input type="file" id="asset-input" hidden multiple>
-  <button id="btn-save">Save</button>
-  <button id="btn-run" class="primary">Run ▶</button>
+  <div id="mode-toggle" class="mode-toggle" hidden>
+    <button type="button" id="btn-mode-console" class="mode-btn" title="Run once and type input lines — text games">Console</button>
+    <button type="button" id="btn-mode-play" class="mode-btn" title="Animated canvas games with keyboard + mouse (compiled and run in your browser)">Play</button>
+  </div>
+
+  <span class="spacer"></span>
+
+  <button type="button" id="btn-new" title="New file">New</button>
+
+  <div class="menu" id="open-menu">
+    <button type="button" class="menu-btn" id="btn-open">Open ▾</button>
+    <div class="menu-list">
+      <button type="button" data-action="add-files">Add files…</button>
+      <button type="button" data-action="add-folder">Add a folder…</button>
+      <button type="button" data-action="import-zip">Import .zip as new project…</button>
+      <button type="button" data-action="import-github">Import from GitHub URL…</button>
+    </div>
+  </div>
+  <button type="button" id="btn-open-single" hidden>Open</button>
+
+  <button type="button" id="btn-save" title="Download this file (Ctrl/⌘+S)">Save</button>
+  <button type="button" id="btn-run" class="primary" title="Ctrl/⌘+Enter">Run ▶</button>
+  <button type="button" id="btn-stop" class="stop" hidden>Stop ■</button>
+  <button type="button" id="btn-help" title="Help & API reference">?</button>
 
   <span id="runtime-status" class="status"></span>
+
+  <input type="file" id="file-input" hidden accept=".html,.htm,.css,.js,.py,.java,.cpp,.cc,.cxx,.txt">
+  <input type="file" id="asset-input" hidden multiple>
+  <input type="file" id="folder-input" hidden webkitdirectory multiple>
+  <input type="file" id="zip-input" hidden accept=".zip,application/zip">
 </header>
 
 <main class="workspace">
-  <section class="editor-pane">
-    <textarea id="editor"></textarea>
-    <div id="asset-preview" hidden></div>
+  <section class="editor-pane" id="editor-pane">
+    <aside id="sidebar" hidden>
+      <div class="sidebar-head">
+        <span>Files</span>
+        <button type="button" id="btn-add-file" title="New file">+</button>
+      </div>
+      <ul id="file-list"></ul>
+    </aside>
+    <div class="editor-main">
+      <textarea id="editor"></textarea>
+      <div id="asset-preview" hidden></div>
+    </div>
+    <div id="drop-overlay" hidden>Drop files or a folder to add them to this project</div>
   </section>
+
+  <div id="splitter" title="Drag to resize"></div>
 
   <section class="output-pane">
     <div class="output-tabs">
-      <span id="output-label">Output</span>
-      <button id="btn-clear-output" title="Clear output">Clear</button>
+      <span id="output-label">Preview</span>
+      <button type="button" id="btn-clear-output" title="Clear">Clear</button>
     </div>
 
-    <iframe id="preview-frame" sandbox="allow-scripts allow-modals" hidden></iframe>
+    <iframe id="preview-frame" title="Preview" sandbox="allow-scripts allow-modals allow-forms allow-pointer-lock" hidden></iframe>
+    <div id="preview-errors" hidden></div>
 
-    <pre id="output-text" hidden></pre>
+    <div id="console-wrap" hidden>
+      <pre id="console-out"></pre>
+      <form id="console-form" autocomplete="off">
+        <span class="prompt">›</span>
+        <input id="console-in" placeholder="type a line of input and press Enter" spellcheck="false">
+        <button type="submit" id="console-send">Send</button>
+      </form>
+    </div>
 
     <div id="play-wrap" hidden>
-      <canvas id="play-canvas" width="480" height="320"></canvas>
-      <p id="play-hint">Click the canvas, then use the keys your game listens for.</p>
+      <canvas id="play-canvas" width="480" height="320" tabindex="0"></canvas>
+      <p id="play-hint">Click the game to give it keyboard focus.</p>
+      <pre id="play-out" hidden></pre>
       <pre id="play-error" hidden></pre>
-    </div>
-
-    <div id="stdin-wrap" hidden>
-      <label for="stdin-box">stdin</label>
-      <textarea id="stdin-box" placeholder="Input for the program (optional)"></textarea>
     </div>
   </section>
 </main>
+
+<div id="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <strong>runline</strong>
+      <button type="button" id="btn-close-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <h3>What runs where</h3>
+      <ul>
+        <li><b>HTML / JS</b> — a whole project (HTML, CSS, JS, images, sounds) previews live in a sandboxed frame. Nothing leaves your browser.</li>
+        <li><b>Python · Play</b> — real Python (Pyodide/WebAssembly) running in your browser, drawing to a canvas. Great for animated games.</li>
+        <li><b>C++ · Play</b> — clang compiles your program to WebAssembly <i>in the browser</i> (first use downloads the ~28 MB compiler once) and runs it against the same canvas API. Needs Chrome 137+.</li>
+        <li><b>Console mode (Python, Java, C++)</b> — compiled and run by the free Judge0 service. Type input lines under the output to play text games; each line re-runs the program with everything typed so far, so keep programs deterministic (fixed secrets, seeded random) for the transcript to line up.</li>
+      </ul>
+
+      <h3>Bringing in a game</h3>
+      <ul>
+        <li><b>Open ▾ → Import from GitHub URL</b> — paste a repo link (public repos only, e.g. a JS canvas game). Every file is downloaded straight into a new project.</li>
+        <li><b>Import .zip</b> — GitHub's "Download ZIP" works as-is.</li>
+        <li>Or drag a folder from the Files app onto the editor.</li>
+        <li>Asset paths like <code>img.src = "img/bird.png"</code> resolve to the files in your project. Paths built at runtime work too, as long as the final string matches a project file.</li>
+      </ul>
+
+      <h3>Python Play API (<code>import runline as rl</code>)</h3>
+      <p>Define <code>setup()</code> (optional) and <code>update(dt)</code> — called every frame with the elapsed seconds.</p>
+      <table>
+        <tr><td><code>rl.set_size(w, h)</code></td><td>canvas size (call in setup)</td></tr>
+        <tr><td><code>rl.width()</code> / <code>rl.height()</code></td><td>current size</td></tr>
+        <tr><td><code>rl.clear(color)</code></td><td>fill the whole canvas</td></tr>
+        <tr><td><code>rl.rect(x, y, w, h, color)</code></td><td>filled rectangle</td></tr>
+        <tr><td><code>rl.stroke_rect(x, y, w, h, color, width)</code></td><td>outlined rectangle</td></tr>
+        <tr><td><code>rl.circle(x, y, r, color)</code></td><td>filled circle</td></tr>
+        <tr><td><code>rl.line(x1, y1, x2, y2, color, width)</code></td><td>line</td></tr>
+        <tr><td><code>rl.text(x, y, s, color, size, align)</code></td><td>text; align = "left" | "center" | "right"</td></tr>
+        <tr><td><code>rl.key_down("ArrowLeft")</code></td><td>True while held (uses <code>KeyboardEvent.code</code>: "Space", "KeyA", "ArrowUp"…)</td></tr>
+        <tr><td><code>rl.key_pressed("Space")</code></td><td>True only on the frame the key went down</td></tr>
+        <tr><td><code>rl.mouse_x()</code> / <code>rl.mouse_y()</code></td><td>pointer position in canvas pixels</td></tr>
+        <tr><td><code>rl.mouse_down()</code> / <code>rl.mouse_pressed()</code></td><td>held / just clicked (also works with touch)</td></tr>
+        <tr><td><code>rl.beep(freq, ms)</code></td><td>a simple tone</td></tr>
+        <tr><td><code>rl.stop()</code></td><td>end the game loop</td></tr>
+      </table>
+      <p>Colors are CSS colors: <code>"red"</code>, <code>"#3498db"</code>, <code>"rgba(0,0,0,0.5)"</code>. <code>print()</code> output appears under the canvas.</p>
+
+      <h3>C++ Play API (<code>#include "runline.h"</code>)</h3>
+      <p>Same functions in the <code>rl::</code> namespace — <code>rl::set_size</code>, <code>rl::clear</code>, <code>rl::rect</code>, <code>rl::stroke_rect</code>, <code>rl::circle</code>, <code>rl::line</code>, <code>rl::text</code>, <code>rl::key_down</code>, <code>rl::key_pressed</code>, <code>rl::mouse_x/y</code>, <code>rl::mouse_down/pressed</code>, <code>rl::beep</code>, <code>rl::time()</code>. Write <code>main()</code> as a loop and call <code>double dt = rl::next_frame();</code> once per iteration — it waits for the next animation frame. <code>printf</code>/<code>std::cout</code> output appears under the canvas. C++20 with the full standard library; exceptions are not supported.</p>
+
+      <h3>Shortcuts</h3>
+      <p><code>Ctrl/⌘ + Enter</code> run · <code>Ctrl/⌘ + S</code> download current file · double-click a file to rename it.</p>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.min.js"></script>
@@ -72,6 +169,10 @@
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.min.js"></script>
-<script src="app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/markdown/markdown.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/closebrackets.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/selection/active-line.min.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

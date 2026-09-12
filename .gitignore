@@ -1,0 +1,4 @@
+spikes/cpp/assets/
+spikes/java/*.jar
+node_modules/
+.DS_Store

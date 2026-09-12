@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>runline spike: C++ compiled and run in the browser</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; background: #14161a; color: #e6e6e6; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  textarea { width: 560px; height: 360px; font: 13px/1.35 ui-monospace, Menlo, monospace; background: #0d0f12; color: #e6e6e6; border: 1px solid #333; padding: 8px; }
+  canvas { background: #000; border: 1px solid #333; display: block; outline: none; }
+  pre { background: #0d0f12; border: 1px solid #333; padding: 8px; margin: 8px 0 0; width: 320px; height: 140px; overflow: auto; font: 12px/1.3 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+  #status { margin: 8px 0; color: #9ad; }
+  #err { color: #f88; }
+  button { font: inherit; padding: 6px 12px; margin-right: 6px; }
+  .ok { color: #8f8; }
+  small { color: #999; }
+</style>
+</head>
+<body>
+<h1>runline spike: C++ compiled and run in the browser (browsercc: clang + wasm-ld in WebAssembly)</h1>
+<div>
+  <button id="run">Compile &amp; Run</button>
+  <button id="stop">Stop</button>
+  <button id="ex-hello">Example: hello</button>
+  <button id="ex-canvas">Example: canvas + keyboard</button>
+  <button id="ex-err">Example: compile error</button>
+  <small id="src-info"></small>
+</div>
+<div id="status">idle</div>
+<div class="row">
+  <textarea id="src" spellcheck="false"></textarea>
+  <div>
+    <canvas id="cv" width="320" height="240" tabindex="0"></canvas>
+    <pre id="out"></pre>
+  </div>
+</div>
+<pre id="timing" style="width:auto;height:auto;margin-top:12px"></pre>
+
+<script type="module">
+const params = new URLSearchParams(location.search);
+const useCdn = params.get("cdn") === "1";
+// browsercc resolves clang.wasm / lld.wasm / sysroot.tar relative to its own index.js
+// (import.meta.url), so pointing the import at a different base is all that is needed.
+const BROWSERCC_BASE = useCdn
+  ? "https://cdn.jsdelivr.net/npm/browsercc@0.1.1/dist/"
+  : new URL("./assets/browsercc/", location.href).href;
+const WASI_SHIM = useCdn
+  ? "https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.4.2/dist/index.js"
+  : new URL("./assets/wasi_shim/index.js", location.href).href;
+
+const $ = (id) => document.getElementById(id);
+const src = $("src"), out = $("out"), status = $("status"), timing = $("timing");
+const cv = $("cv"), ctx = cv.getContext("2d");
+$("src-info").textContent = `toolchain: ${useCdn ? "jsDelivr CDN" : "self-hosted ./assets"} (add ?cdn=1 to switch)`;
+
+const EX_HELLO = `#include <cstdio>
+int main(){ printf("hi from c++\\n"); return 0; }
+`;
+
+const EX_ERR = `#include <cstdio>
+int main() {
+  int x = "not an int";
+  printf("%d\\n", x)
+  return 0;
+}
+`;
+
+const EX_CANVAS = `// Canvas + keyboard from C++. The rl_* functions are implemented in JS
+// and imported into the wasm module via import_module/import_name.
+#include <cstdio>
+#define RL(name) __attribute__((import_module("rl"), import_name(#name)))
+RL(clear)      void rl_clear();
+RL(color)      void rl_color(int r, int g, int b);
+RL(rect)       void rl_rect(int x, int y, int w, int h);
+RL(key)        int  rl_key(int keyCode);       // 1 while the key is held
+RL(next_frame) void rl_next_frame();           // blocks until the next animation frame (JSPI)
+
+int main() {
+  int x = 140, y = 100, vx = 2, vy = 1;
+  for (int frame = 0; frame < 600; frame++) {
+    if (rl_key(37)) x -= 3;   // left
+    if (rl_key(39)) x += 3;   // right
+    if (rl_key(38)) y -= 3;   // up
+    if (rl_key(40)) y += 3;   // down
+    x += vx; y += vy;
+    if (x < 0 || x > 280) vx = -vx;
+    if (y < 0 || y > 200) vy = -vy;
+    rl_clear();
+    rl_color(30, 30, 45);  rl_rect(0, 0, 320, 240);
+    rl_color(255, 120, 0); rl_rect(x, y, 40, 40);
+    if (frame % 60 == 0) printf("frame %d  pos=(%d,%d)\\n", frame, x, y);
+    rl_next_frame();
+  }
+  printf("done after 600 frames\\n");
+  return 0;
+}
+`;
+
+src.value = EX_HELLO;
+$("ex-hello").onclick = () => (src.value = EX_HELLO);
+$("ex-canvas").onclick = () => (src.value = EX_CANVAS);
+$("ex-err").onclick = () => (src.value = EX_ERR);
+
+const hasJSPI = typeof WebAssembly.Suspending === "function" && typeof WebAssembly.promising === "function";
+const log = (s) => { out.textContent += s; out.scrollTop = out.scrollHeight; };
+const setStatus = (s, cls = "") => { status.textContent = s; status.className = cls; };
+
+// --- keyboard state shared with the running program -----------------------
+const keysDown = new Set();
+cv.addEventListener("keydown", (e) => { keysDown.add(e.keyCode); e.preventDefault(); });
+cv.addEventListener("keyup", (e) => { keysDown.delete(e.keyCode); });
+
+// --- lazy-load the toolchain and runtime -----------------------------------
+let ccPromise = null;
+async function loadToolchain() {
+  if (!ccPromise) {
+    ccPromise = Promise.all([import(BROWSERCC_BASE + "index.js"), import(WASI_SHIM)]);
+  }
+  return ccPromise;
+}
+
+let generation = 0;
+$("stop").onclick = () => { generation++; setStatus("stopped"); };
+
+function makeRlImports(gen) {
+  const nextFrame = () => new Promise((resolve, reject) => {
+    requestAnimationFrame(() => (gen === generation ? resolve() : reject(new Error("program stopped"))));
+  });
+  return {
+    clear: () => ctx.clearRect(0, 0, cv.width, cv.height),
+    color: (r, g, b) => { ctx.fillStyle = `rgb(${r},${g},${b})`; },
+    rect: (x, y, w, h) => ctx.fillRect(x, y, w, h),
+    key: (code) => (keysDown.has(code) ? 1 : 0),
+    // With JSPI the wasm stack suspends inside this import until the promise resolves.
+    next_frame: hasJSPI
+      ? new WebAssembly.Suspending(nextFrame)
+      : () => { throw new Error("rl_next_frame needs JSPI (WebAssembly.Suspending), not available in this browser"); },
+  };
+}
+
+function resourceTimings() {
+  return performance.getEntriesByType("resource")
+    .filter((r) => /clang\.wasm|lld\.wasm|sysroot\.tar|clang\.js|lld\.js/.test(r.name))
+    .map((r) => `  ${r.name.split("/").pop().padEnd(12)} ${(r.transferSize / 1e6).toFixed(1).padStart(6)} MB transferred (${(r.decodedBodySize / 1e6).toFixed(1)} MB decoded)  ${r.duration.toFixed(0)} ms`)
+    .join("\n");
+}
+
+let runCount = 0;
+async function compileAndRun() {
+  const myGen = ++generation;
+  out.textContent = "";
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const flags = ["-std=c++20", "-O2"];
+  try {
+    setStatus(runCount === 0 ? "loading toolchain (first use: ~94 MB of wasm + sysroot)..." : "compiling...");
+    const tLoad0 = performance.now();
+    const [cc, shim] = await loadToolchain();
+    const tLoad1 = performance.now();
+
+    setStatus("compiling...");
+    const tc0 = performance.now();
+    const { module, compileOutput } = await cc.compile({ source: src.value, fileName: "main.cpp", flags });
+    const tc1 = performance.now();
+    runCount++;
+
+    const lines = [
+      `run #${runCount}  JSPI: ${hasJSPI ? "yes" : "no"}  flags: ${flags.join(" ")}`,
+      `  toolchain import: ${(tLoad1 - tLoad0).toFixed(0)} ms   compile+link (incl. first-use wasm instantiation): ${(tc1 - tc0).toFixed(0)} ms`,
+    ];
+    if (runCount === 1) lines.push(resourceTimings());
+    timing.textContent = lines.join("\n") + "\n" + timing.textContent;
+
+    if (compileOutput.trim()) log(compileOutput + "\n");
+    if (!module) { setStatus("compile failed"); status.style.color = "#f88"; return; }
+    status.style.color = "";
+
+    setStatus("running...");
+    const { WASI, File, OpenFile, ConsoleStdout, WASIProcExit } = shim;
+    const dec = new TextDecoder();
+    const fds = [
+      new OpenFile(new File(new Uint8Array(0))),      // stdin (empty)
+      new ConsoleStdout((d) => log(dec.decode(d))),   // stdout
+      new ConsoleStdout((d) => log(dec.decode(d))),   // stderr
+    ];
+    const wasi = new WASI(["main"], [], fds);
+    const instance = await WebAssembly.instantiate(module, {
+      wasi_snapshot_preview1: wasi.wasiImport,
+      rl: makeRlImports(myGen),
+    });
+    wasi.inst = instance;
+    cv.focus();
+    const tr0 = performance.now();
+    let exitCode = 0;
+    try {
+      if (hasJSPI) await WebAssembly.promising(instance.exports._start)();
+      else instance.exports._start();
+    } catch (e) {
+      if (e instanceof WASIProcExit) exitCode = e.code; else throw e;
+    }
+    const tr1 = performance.now();
+    if (myGen === generation) setStatus(`exited with code ${exitCode} after ${(tr1 - tr0).toFixed(0)} ms`, exitCode === 0 ? "ok" : "");
+  } catch (e) {
+    if (myGen !== generation) return;
+    setStatus("error: " + (e && e.message ? e.message : e));
+    status.style.color = "#f88";
+    log("\n[runtime error] " + (e && e.stack ? e.stack : e) + "\n");
+  }
+}
+$("run").onclick = compileAndRun;
+setStatus(`idle. JSPI (WebAssembly.Suspending) available: ${hasJSPI}`);
+</script>
+</body>
+</html>
