@@ -1,10 +1,11 @@
 import { db } from "./db.js";
-import { CONSOLE_STARTERS, PYTHON_PLAY_STARTER, CPP_PLAY_STARTER, base64ToBytes } from "./starters.js";
+import { CONSOLE_STARTERS, PYTHON_PLAY_STARTER, CPP_PLAY_STARTER, JAVA_PLAY_STARTER, base64ToBytes } from "./starters.js";
 import * as P from "./project.js";
 import { buildPreviewHtml } from "./preview.js";
 import { fetchRuntimes, InteractiveConsole } from "./console.js";
 import { PyPlay } from "./pyplay.js";
 import { CppPlay } from "./cppplay.js";
+import { JavaPlay } from "./javaplay.js";
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -43,6 +44,9 @@ const el = {
   consoleIn: $("console-in"),
   playWrap: $("play-wrap"),
   playCanvas: $("play-canvas"),
+  javaWrap: $("java-wrap"),
+  playHint: $("play-hint"),
+  javaConsoleSink: $("console"),
   playOut: $("play-out"),
   playError: $("play-error"),
   modal: $("modal"),
@@ -59,7 +63,7 @@ const PREF = {
 const modePref = (lang) => `runline:mode:${lang}`;
 
 // Languages with a Play (canvas game) mode alongside the console mode.
-const PLAY_LANGS = ["python", "cpp"];
+const PLAY_LANGS = ["python", "cpp", "java"];
 
 const state = {
   lang: localStorage.getItem(PREF.lang) || "html",
@@ -128,7 +132,11 @@ const runnerHooks = {
   },
   onStopped: () => updateRunButtons(),
 };
-const runners = { python: new PyPlay(runnerHooks), cpp: new CppPlay(runnerHooks) };
+const runners = {
+  python: new PyPlay(runnerHooks),
+  cpp: new CppPlay(runnerHooks),
+  java: new JavaPlay({ ...runnerHooks, container: el.javaWrap, consoleSink: el.javaConsoleSink }),
+};
 
 function currentRunner() {
   return runners[state.lang] || null;
@@ -169,7 +177,7 @@ function langStorageKey(lang) {
 }
 
 function starterFor(lang) {
-  if (state.modes[lang] === "play") return lang === "python" ? PYTHON_PLAY_STARTER : CPP_PLAY_STARTER;
+  if (state.modes[lang] === "play") return { python: PYTHON_PLAY_STARTER, cpp: CPP_PLAY_STARTER, java: JAVA_PLAY_STARTER }[lang];
   return CONSOLE_STARTERS[lang];
 }
 
@@ -411,6 +419,11 @@ async function mergeFiles(files, { openFirst = true } = {}) {
     setStatus("No usable files found.");
     return;
   }
+  const clobbered = paths.filter((p) => state.project.files[p]);
+  if (clobbered.length && !confirm(`Replace ${clobbered.length} existing file${clobbered.length === 1 ? "" : "s"} (${clobbered.slice(0, 3).join(", ")}${clobbered.length > 3 ? "…" : ""})?`)) {
+    for (const p of clobbered) delete files[p];
+    if (!Object.keys(files).length) return;
+  }
   Object.assign(state.project.files, files);
   const first = paths.find((p) => p === "index.html") || paths.find((p) => /\.html?$/.test(p)) || paths[0];
   if (openFirst) state.project.activeFile = first;
@@ -485,6 +498,10 @@ function applyChrome() {
   el.btnModePlay.classList.toggle("active", mode === "play");
 
   el.outputLabel.textContent = kind === "preview" ? "Preview" : kind === "play" ? "Play" : "Console";
+  const isJava = state.lang === "java";
+  el.playCanvas.hidden = isJava;
+  el.javaWrap.hidden = !isJava;
+  el.playHint.textContent = isJava ? "Click the Java window to give it keyboard focus." : "Click the game to give it keyboard focus.";
   showPane(kind);
   updateRunButtons();
 }
@@ -709,7 +726,7 @@ document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key === "Enter") {
     e.preventDefault();
-    run();
+    if (!el.btnRun.disabled) run();
   } else if (mod && e.key.toLowerCase() === "s") {
     e.preventDefault();
     el.btnSave.click();
@@ -727,9 +744,10 @@ el.editorPane.addEventListener("dragenter", (e) => {
   dragDepth++;
   el.dropOverlay.hidden = false;
 });
-el.editorPane.addEventListener("dragover", (e) => {
-  if (state.lang === "html") e.preventDefault();
-});
+el.editorPane.addEventListener("dragover", (e) => e.preventDefault());
+// Never let a stray drop navigate the tab away from the editor.
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => e.preventDefault());
 el.editorPane.addEventListener("dragleave", () => {
   if (--dragDepth <= 0) {
     dragDepth = 0;
@@ -744,6 +762,11 @@ el.editorPane.addEventListener("drop", async (e) => {
   const dropped = await P.filesFromDataTransfer(e.dataTransfer);
   if (dropped.length === 1 && /\.zip$/i.test(dropped[0].name)) return importZipFile(dropped[0]);
   await mergeFiles(await P.filesFromFileList(dropped));
+});
+
+window.addEventListener("pagehide", () => {
+  if (state.lang === "html") saveProjectNow();
+  else localStorage.setItem(langStorageKey(state.lang), cm.getValue());
 });
 
 // resizable split
@@ -782,16 +805,25 @@ async function init() {
     .then(() => setStatus("Ready"))
     .catch(() => setStatus("Execution service unreachable — HTML preview and Python Play still work"));
 
-  await refreshProjectList();
-  if (!state.projects.length) {
-    const legacy = migrateLegacyProject();
-    const project = P.newProject(legacy ? "My project" : "Square Runner", legacy || undefined);
-    await db.putProject(project);
+  try {
     await refreshProjectList();
+    if (!state.projects.length) {
+      const legacy = migrateLegacyProject();
+      const project = P.newProject(legacy ? "My project" : "Square Runner", legacy || undefined);
+      await db.putProject(project);
+      await refreshProjectList();
+    }
+    const wantedId = localStorage.getItem(PREF.projectId);
+    const initial = state.projects.find((p) => p.id === wantedId) || state.projects[0];
+    await openProject(initial.id);
+  } catch (err) {
+    // No IndexedDB (private mode / storage disabled): keep working in memory.
+    state.project = P.newProject("Square Runner");
+    state.projects = [state.project];
+    renderFileList();
+    loadActiveFile();
+    setTimeout(() => setStatus("Storage unavailable — projects won't persist in this browser"), 1500);
   }
-  const wantedId = localStorage.getItem(PREF.projectId);
-  const initial = state.projects.find((p) => p.id === wantedId) || state.projects[0];
-  await openProject(initial.id);
 
   el.langSelect.value = state.lang;
   if (state.lang !== "html") {

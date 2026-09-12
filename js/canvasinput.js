@@ -23,6 +23,7 @@ export class CanvasInput {
     };
     canvas.addEventListener("pointerdown", (e) => {
       canvas.focus();
+      if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
       pos(e);
       this.mouse.down = true;
       this.mouse.pressed = true;

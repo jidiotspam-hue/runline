@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>runline spike: Java in the browser (CheerpJ)</title>
+<!--
+  CheerpJ 4.3 loader (released 2026-04-21, latest on the CDN as of 2026-09-12).
+  Only this ~2.5 KB loader is fetched eagerly; cj3.js / cj3.wasm / cj3n8.wasm and the
+  Java runtime jars are fetched on demand from the same CDN path.
+  The Community License requires loading from cjrtnc.leaningtech.com (no self-hosting).
+-->
+<script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: #f4f4f5; color: #18181b; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #fff; border-bottom: 1px solid #e4e4e7; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 12px 0 0; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid #a1a1aa; border-radius: 6px; background: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+  #status { margin-left: auto; font-size: 13px; color: #52525b; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; }
+  textarea { width: 100%; height: 480px; box-sizing: border-box; font: 13px/1.4 ui-monospace, Menlo, monospace; border: 1px solid #d4d4d8; border-radius: 6px; padding: 8px; resize: vertical; white-space: pre; }
+  /* The runner iframe is created inside this box; the Java display fills the iframe. */
+  #display-wrap { width: 640px; height: 480px; border: 1px solid #d4d4d8; border-radius: 6px; background: #ddd; position: relative; overflow: hidden; }
+  #display-wrap.focused { outline: 3px solid #2563eb; }
+  #display-wrap iframe { display: block; width: 100%; height: 100%; border: 0; }
+  #out { grid-column: 1 / -1; background: #111; color: #d4d4d8; font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 8px; border-radius: 6px; height: 220px; overflow: auto; white-space: pre-wrap; margin: 0; }
+  #out .meta { color: #60a5fa; }
+  #out .javac { color: #fbbf24; }
+  /* Sink for the compiler JVM's stdout/stderr. CheerpJ writes into #console with
+     `textContent +=`, so it must contain nothing but text; we mirror it into #out. */
+  #console { display: none; }
+  label { font-size: 12px; color: #52525b; display: block; margin-bottom: 4px; }
+  select { font: inherit; padding: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>runline Java spike (CheerpJ)</h1>
+  <select id="examples">
+    <option value="console">Example: console</option>
+    <option value="swing">Example: Swing game</option>
+    <option value="error">Example: compile error</option>
+  </select>
+  <button id="run" class="primary" disabled>Compile &amp; Run</button>
+  <button id="stop" disabled>Stop</button>
+  <button id="clear">Clear console</button>
+  <span id="status">loading CheerpJ…</span>
+</header>
+<main>
+  <div>
+    <label for="src">Java source (public class name = file name)</label>
+    <textarea id="src" spellcheck="false"></textarea>
+  </div>
+  <div>
+    <label>AWT/Swing display (640×480) — click a Java window to give it keyboard focus</label>
+    <div id="display-wrap"></div>
+  </div>
+  <pre id="out"></pre>
+  <pre id="console"></pre>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Example programs
+// ---------------------------------------------------------------------------
+const EXAMPLES = {
+  console: `public class Main {
+    public static void main(String[] a) {
+        System.out.println("hi from java");
+    }
+}
+`,
+  swing: `import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+
+public class Main {
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            JFrame f = new JFrame("Square game");
+            f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            GamePanel p = new GamePanel();
+            f.setContentPane(p);
+            f.pack();
+            f.setLocation(20, 20);
+            f.setVisible(true);
+            p.requestFocusInWindow();
+        });
+    }
+}
+
+class GamePanel extends JPanel implements ActionListener, KeyListener {
+    int x = 40, y = 40, vx = 3, vy = 2, size = 30;
+    int frames = 0;
+    String lastKey = "(none)";
+
+    GamePanel() {
+        setPreferredSize(new Dimension(500, 380));
+        setBackground(Color.BLACK);
+        setFocusable(true);
+        addKeyListener(this);
+        new Timer(16, this).start();
+    }
+
+    public void actionPerformed(ActionEvent e) {
+        x += vx; y += vy;
+        if (x < 0 || x + size > getWidth())  { vx = -vx; x += vx; }
+        if (y < 0 || y + size > getHeight()) { vy = -vy; y += vy; }
+        frames++;
+        if (frames % 60 == 0) System.out.println("frame " + frames + " at (" + x + "," + y + ")");
+        repaint();
+    }
+
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        g.setColor(Color.CYAN);
+        g.fillRect(x, y, size, size);
+        g.setColor(Color.WHITE);
+        g.drawString("frame " + frames + "  last key: " + lastKey + "  (arrows move)", 10, 20);
+    }
+
+    public void keyPressed(KeyEvent e) {
+        lastKey = KeyEvent.getKeyText(e.getKeyCode());
+        switch (e.getKeyCode()) {
+            case KeyEvent.VK_LEFT:  x -= 20; break;
+            case KeyEvent.VK_RIGHT: x += 20; break;
+            case KeyEvent.VK_UP:    y -= 20; break;
+            case KeyEvent.VK_DOWN:  y += 20; break;
+        }
+        System.out.println("key " + lastKey);
+        repaint();
+    }
+    public void keyReleased(KeyEvent e) {}
+    public void keyTyped(KeyEvent e) {}
+}
+`,
+  error: `public class Main {
+    public static void main(String[] a) {
+        int x = "not an int";
+        System.out.println(y);
+    }
+}
+`,
+};
+
+// ---------------------------------------------------------------------------
+// UI helpers
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const srcEl = $('src'), runBtn = $('run'), stopBtn = $('stop'), statusEl = $('status'), outEl = $('out');
+
+function setStatus(s) { statusEl.textContent = s; console.log('[spike] ' + s); }
+function append(text, cls) {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  outEl.appendChild(span);
+  outEl.scrollTop = outEl.scrollHeight;
+}
+function meta(s) { append(`[runline] ${s}\n`, 'meta'); }
+
+// Mirror a CheerpJ "#console" sink (which only ever grows via `textContent +=`)
+// into the visible output area. Returns a disconnect function.
+function mirrorConsole(sink, cls) {
+  let seen = 0;
+  const flush = () => {
+    const text = sink.textContent;
+    if (text.length < seen) seen = 0;          // sink was cleared
+    if (text.length > seen) { append(text.slice(seen), cls); seen = text.length; }
+  };
+  const mo = new MutationObserver(flush);
+  mo.observe(sink, { childList: true, characterData: true, subtree: true });
+  return () => { flush(); mo.disconnect(); };
+}
+
+$('examples').addEventListener('change', (e) => { srcEl.value = EXAMPLES[e.target.value]; });
+srcEl.value = EXAMPLES.console;
+$('clear').addEventListener('click', () => { outEl.textContent = ''; $('console').textContent = ''; });
+
+const timings = {};
+window.__timings = timings;
+
+// ---------------------------------------------------------------------------
+// Compiler JVM (lives in this page for the whole session, so javac stays warm)
+// ---------------------------------------------------------------------------
+const TOOLS_JAR = '/app/tools.jar';          // served next to this page (18 MB, read via HTTP Range requests)
+let lib = null;                              // library-mode handle into the compiler JVM (for mkdir/rm on /files/)
+let runId = 0;
+
+async function initCompiler() {
+  const t0 = performance.now();
+  await cheerpjInit({ version: 8, status: 'none' });   // Java 8: tools.jar is the JDK 8 javac
+  timings.initMs = Math.round(performance.now() - t0);
+  mirrorConsole($('console'), 'javac');                 // javac diagnostics -> #out
+  lib = await cheerpjRunLibrary('');                    // std library only, for java.io.File
+  setStatus(`ready (init ${timings.initMs} ms)`);
+  runBtn.disabled = false;
+}
+
+// Derive the class to run: the public class, or the first class, plus package if any.
+function mainClassOf(src) {
+  const pkg = /^\s*package\s+([\w.]+)\s*;/m.exec(src);
+  const cls = /\bpublic\s+(?:final\s+)?class\s+(\w+)/.exec(src) || /\bclass\s+(\w+)/.exec(src);
+  const name = cls ? cls[1] : 'Main';
+  return { file: name + '.java', className: pkg ? pkg[1] + '.' + name : name };
+}
+
+// /files/ is IndexedDB-backed and persistent; it is *Java-writable only*, so directory
+// management goes through library mode. Each run compiles into its own directory so a
+// renamed class can never fall back to a stale .class from an earlier run.
+async function mkdirs(path) {
+  const File = await lib.java.io.File;
+  const f = await new File(path);
+  await f.mkdirs();
+}
+async function rmTree(path) {
+  const File = await lib.java.io.File;
+  const f = await new File(path);
+  if (!(await f.exists())) return;
+  if (await f.isDirectory()) {
+    const kids = await f.listFiles();        // Java array proxy: use .length + index, not for..of
+    for (let i = 0; i < kids.length; i++) await rmTree(await kids[i].getPath());
+  }
+  await f.delete();
+}
+
+async function compile(src) {
+  const id = ++runId;
+  const outDir = `/files/run${id}/`;
+  const { file, className } = mainClassOf(src);
+
+  // 1. Source -> /str/ (JS-writable, Java-readable, in-memory; no subdirectories allowed).
+  cheerpOSAddStringFile('/str/' + file, src);
+
+  // 2. Filesystem housekeeping via library mode, strictly *before* javac starts.
+  //    PITFALL: running library-mode java.io.File calls concurrently with a javac run in
+  //    the same JVM hung javac inside File.listFiles() (boot classpath scan) in testing.
+  const tFs = performance.now();
+  if (id > 1) await rmTree(`/files/run${id - 1}/`).catch((e) => console.warn('rmTree', e));
+  await mkdirs(outDir);                       // javac needs -d to exist already
+  timings.fsMs = Math.round(performance.now() - tFs);
+
+  // 3. Run javac from tools.jar inside the compiler JVM. Diagnostics go to #console.
+  const t0 = performance.now();
+  const exit = await cheerpjRunMain('com.sun.tools.javac.Main', TOOLS_JAR + ':' + outDir,
+    '-d', outDir, '-Xlint:none', '-nowarn', '/str/' + file);
+  const compileMs = Math.round(performance.now() - t0);
+  timings.compiles = (timings.compiles || []).concat(compileMs);
+
+  return { exit, outDir, className, compileMs };
+}
+
+// ---------------------------------------------------------------------------
+// Runner JVM: one throwaway same-origin iframe per run. Stopping a program = removing
+// the iframe (there is no CheerpJ API to kill threads, and cheerpjRunMain does not
+// resolve while AWT threads are alive). The iframe's own #console captures the
+// program's stdout/stderr and is mirrored into #out.
+// ---------------------------------------------------------------------------
+let runner = null;       // { iframe, stopMirror }
+
+const RUNNER_HTML = `<!doctype html><html><head><meta charset="utf-8">
+<script src="https://cjrtnc.leaningtech.com/4.3/loader.js"><\/script>
+<style>html,body{margin:0;height:100%;background:#ddd}#d{width:100%;height:100%}<\/style>
+</head><body><div id="d"></div><pre id="console" style="display:none"></pre>
+<script>
+window.__run = async (className, classPath) => {
+  const t0 = performance.now();
+  await cheerpjInit({ version: 8, status: 'none' });
+  window.__initMs = Math.round(performance.now() - t0);
+  cheerpjCreateDisplay(-1, -1, document.getElementById('d'));   // fills the iframe
+  const t1 = performance.now();
+  const code = await cheerpjRunMain(className, classPath);      // resolves when the JVM exits
+  window.__runMs = Math.round(performance.now() - t1);
+  return code;
+};
+<\/script></body></html>`;
+
+function stopRunner() {
+  if (!runner) return;
+  runner.stopMirror();
+  runner.iframe.remove();     // kills the JVM, all its threads, timers and windows
+  runner = null;
+  $('display-wrap').classList.remove('focused');
+  stopBtn.disabled = true;
+}
+
+function startRunner(className, classPath) {
+  stopRunner();
+  const iframe = document.createElement('iframe');
+  iframe.srcdoc = RUNNER_HTML;               // same origin as this page, so we can script it
+  $('display-wrap').appendChild(iframe);
+  return new Promise((resolve) => {
+    iframe.addEventListener('load', async () => {
+      const w = iframe.contentWindow;
+      const stopMirror = mirrorConsole(w.document.getElementById('console'));
+      runner = { iframe, stopMirror };
+      stopBtn.disabled = false;
+      // Keyboard: CheerpJ listens on a hidden <textarea> inside #cheerpjDisplay. Clicking a
+      // Java window focuses it; we also focus it as soon as the first window appears.
+      const focusJava = () => { const ta = w.document.querySelector('#cheerpjDisplay textarea'); if (ta) ta.focus(); };
+      new MutationObserver((m, mo) => { if (w.document.querySelector('.cjWindow')) { focusJava(); mo.disconnect(); } })
+        .observe(w.document.body, { childList: true, subtree: true });
+      w.document.addEventListener('focusin', () => $('display-wrap').classList.add('focused'));
+      w.document.addEventListener('focusout', () => $('display-wrap').classList.remove('focused'));
+      w.__runnerResources = () => w.cjGetRuntimeResources && w.cjGetRuntimeResources();
+
+      const code = await w.__run(className, classPath);
+      timings.runnerInitMs = w.__initMs;
+      timings.lastRunMs = w.__runMs;
+      resolve(code);
+    }, { once: true });
+  });
+}
+
+async function compileAndRun() {
+  runBtn.disabled = true;
+  stopRunner();
+  const src = srcEl.value;
+  meta('compiling…');
+  setStatus('compiling…');
+  let res;
+  try {
+    res = await compile(src);
+  } catch (e) {
+    meta('compile crashed: ' + e); console.error(e);
+    runBtn.disabled = false; setStatus('compile crashed'); return;
+  }
+  if (res.exit !== 0) {
+    meta(`javac failed (exit ${res.exit}) in ${res.compileMs} ms`);
+    setStatus(`compile error (${res.compileMs} ms)`);
+    runBtn.disabled = false;
+    return;
+  }
+  meta(`compiled ${res.className} in ${res.compileMs} ms; starting runner…`);
+  setStatus(`running (compile ${res.compileMs} ms)`);
+  runBtn.disabled = false;      // a new run stops the previous one
+  const code = await startRunner(res.className, res.outDir);
+  if (runner && runner.iframe.isConnected) {
+    meta(`program exited with code ${code} after ${timings.lastRunMs} ms`);
+    setStatus(`exited (${code})`);
+  }
+}
+
+runBtn.addEventListener('click', compileAndRun);
+stopBtn.addEventListener('click', () => { stopRunner(); meta('stopped'); setStatus('stopped'); });
+window.__stopRunner = stopRunner;
+window.__runner = () => runner;
+initCompiler().catch((e) => { setStatus('init failed: ' + e); console.error(e); });
+</script>
+</body>
+</html>

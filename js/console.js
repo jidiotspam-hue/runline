@@ -105,6 +105,7 @@ export class InteractiveConsole {
   }
 
   start(lang, code) {
+    if (this.running) return;
     this.lang = lang;
     this.code = code;
     this.inputs = [];
@@ -167,7 +168,10 @@ export class InteractiveConsole {
       this.lastOut = out;
 
       // Reading past the end of stdin just means the program wants more input.
-      const wantsInput = /EOFError|NoSuchElementException|EOF when reading/.test(r.stderr || "");
+      // ...or the program exited cleanly right after printing a prompt (no trailing newline).
+      const wantsInput =
+        /EOFError|NoSuchElementException|EOF when reading/.test(r.stderr || "") ||
+        (r.status === "Accepted" && out.length > 0 && !out.endsWith("\n"));
       if (wantsInput) {
         this.append("\n⌨ waiting for input — type a line below and press Enter\n", "meta");
       } else {

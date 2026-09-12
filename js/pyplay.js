@@ -74,6 +74,7 @@ export class PyPlay {
     this.loading = null;
     this.frame = null;
     this.stopRequested = false;
+    this.generation = 0;
   }
 
   // --- API surface reached from Python via js.RL ---
@@ -169,6 +170,7 @@ export class PyPlay {
   }
 
   stop() {
+    this.generation++;
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = null;
   }
@@ -179,11 +181,13 @@ export class PyPlay {
 
   async run(code) {
     this.stop();
+    const gen = this.generation;
     this.stopRequested = false;
     this.input.reset();
     window.RL = this;
 
     const py = await this.ensureLoaded();
+    if (gen !== this.generation) return; // stopped or restarted while loading
     // Fresh globals each run so stale state from a previous game can't leak.
     const globals = py.globals.get("dict")();
     globals.set("__name__", "__main__");
@@ -197,6 +201,7 @@ export class PyPlay {
     this.canvas.focus({ preventScroll: true });
     let last = performance.now();
     const tick = (now) => {
+      if (gen !== this.generation) return;
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       try {

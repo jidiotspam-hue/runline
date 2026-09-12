@@ -33,6 +33,10 @@ export function guessMime(path) {
   return MIME_BY_EXT[extOf(path)] || "application/octet-stream";
 }
 
+export function guessTextMime(path) {
+  return { css: "text/css", js: "text/javascript", mjs: "text/javascript", json: "application/json", svg: "image/svg+xml", html: "text/html", htm: "text/html" }[extOf(path)] || "text/plain";
+}
+
 export function normalizePath(p) {
   return p.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "").split("?")[0].split("#")[0];
 }
@@ -88,13 +92,16 @@ async function readBytes(file) {
 
 // Files from <input type=file>, <input webkitdirectory>, or drag & drop.
 // Each File may carry a relative path (webkitRelativePath or ._relPath from drop traversal).
-export async function filesFromFileList(fileList) {
+// stripRoot: drop a single shared top-level folder (right for zips / new projects,
+// wrong when adding a folder to an existing project, where its name is the path).
+export async function filesFromFileList(fileList, { stripRoot = false } = {}) {
   const out = {};
   for (const f of fileList) {
     const rel = normalizePath(f._relPath || f.webkitRelativePath || f.name);
     if (IGNORED_PATH.test(rel) || f.size > MAX_FILE_BYTES) continue;
     out[rel] = fileFromBytes(rel, await readBytes(f));
   }
+  if (!stripRoot) return out;
   const strip = stripCommonRoot(Object.keys(out));
   const result = {};
   for (const [p, rec] of Object.entries(out)) result[strip(p)] = rec;
@@ -126,15 +133,23 @@ export async function filesFromDataTransfer(dt) {
   return files;
 }
 
+const scriptLoads = new Map();
 function loadScriptOnce(src) {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) return resolve();
-    const s = document.createElement("script");
-    s.src = src;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error(`Failed to load ${src}`));
-    document.head.appendChild(s);
-  });
+  if (!scriptLoads.has(src)) {
+    const p = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => {
+        s.remove();
+        scriptLoads.delete(src);
+        reject(new Error(`Failed to load ${src}`));
+      };
+      document.head.appendChild(s);
+    });
+    scriptLoads.set(src, p);
+  }
+  return scriptLoads.get(src);
 }
 
 export async function filesFromZip(arrayBuffer) {
@@ -165,7 +180,7 @@ export async function projectToZipBlob(project) {
 // Parse github.com URLs: /owner/repo, /owner/repo/tree/branch/sub/dir, or owner/repo shorthand.
 export function parseGitHubUrl(input) {
   const s = input.trim();
-  let m = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+)(?:\/tree\/([^/\s]+)(?:\/(.*))?)?/);
+  let m = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+)(?:\/(?:tree|blob)\/([^/\s]+)(?:\/(.*))?)?/);
   if (!m) m = s.match(/^([\w.-]+)\/([\w.-]+)$/);
   if (!m) return null;
   return { owner: m[1], repo: m[2].replace(/\.git$/, ""), branch: m[3] || null, subdir: m[4] ? normalizePath(m[4]).replace(/\/$/, "") : "" };

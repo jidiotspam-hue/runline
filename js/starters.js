@@ -229,6 +229,122 @@ int main() {
 }
 `;
 
+export const JAVA_PLAY_STARTER = `import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.ArrayList;
+import java.util.Random;
+
+// Play mode: javac runs in your browser and the program runs with Swing.
+// Click the game window first so it gets the keyboard.
+public class Main {
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            JFrame f = new JFrame("Square Runner");
+            f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            GamePanel p = new GamePanel();
+            f.setContentPane(p);
+            f.pack();
+            f.setLocation(8, 8);
+            f.setVisible(true);
+            p.requestFocusInWindow();
+        });
+    }
+}
+
+class GamePanel extends JPanel implements ActionListener {
+    static final int W = 480, H = 320, GROUND_Y = 260;
+    static final double GRAVITY = 900, JUMP_V = -420, DT = 1.0 / 60;
+
+    double playerY = GROUND_Y, vy = 0;
+    boolean onGround = true, gameOver = false;
+    ArrayList<double[]> obstacles = new ArrayList<>(); // {x, w, h}
+    ArrayList<double[]> coins = new ArrayList<>();     // {x, y}
+    int score = 0, best = 0;
+    double spawnTimer = 0, coinTimer = 0;
+    Random rng = new Random();
+
+    GamePanel() {
+        setPreferredSize(new Dimension(W, H));
+        setBackground(new Color(0x87ceeb));
+        setFocusable(true);
+        addKeyListener(new KeyAdapter() {
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_UP) jump();
+            }
+        });
+        addMouseListener(new MouseAdapter() {
+            public void mousePressed(MouseEvent e) { requestFocusInWindow(); jump(); }
+        });
+        new Timer(16, this).start();
+    }
+
+    void jump() {
+        if (gameOver) reset();
+        else if (onGround) { vy = JUMP_V; onGround = false; }
+    }
+
+    void reset() {
+        playerY = GROUND_Y; vy = 0; onGround = true; gameOver = false;
+        obstacles.clear(); coins.clear(); score = 0; spawnTimer = coinTimer = 0;
+    }
+
+    public void actionPerformed(ActionEvent e) {
+        if (!gameOver) {
+            vy += GRAVITY * DT;
+            playerY += vy * DT;
+            if (playerY >= GROUND_Y) { playerY = GROUND_Y; vy = 0; onGround = true; }
+
+            if ((spawnTimer += DT) > 1.5) { spawnTimer = 0; obstacles.add(new double[] {W, 20, 30}); }
+            if ((coinTimer += DT) > 2.1) { coinTimer = 0; coins.add(new double[] {W, GROUND_Y - 60 - rng.nextInt(60)}); }
+
+            for (double[] o : obstacles) o[0] -= 220 * DT;
+            for (double[] c : coins) c[0] -= 220 * DT;
+            obstacles.removeIf(o -> o[0] + o[1] < 0);
+            coins.removeIf(c -> c[0] < -20);
+
+            double px = 40, py = playerY, pw = 24, ph = 24;
+            for (double[] o : obstacles) {
+                double oy = GROUND_Y - o[2] + 30;
+                if (px < o[0] + o[1] && px + pw > o[0] && py + ph > oy && py < oy + o[2]) {
+                    gameOver = true;
+                    best = Math.max(best, score);
+                }
+            }
+            coins.removeIf(c -> {
+                double dx = px + pw / 2 - c[0], dy = py + ph / 2 - c[1];
+                if (dx * dx + dy * dy < 24 * 24) { score++; return true; }
+                return false;
+            });
+        }
+        repaint();
+    }
+
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        g.setColor(new Color(0x5b3a29));
+        g.fillRect(0, GROUND_Y + 24, W, H - GROUND_Y - 24);
+        g.setColor(new Color(0xe74c3c));
+        for (double[] o : obstacles) g.fillRect((int) o[0], (int) (GROUND_Y - o[2] + 30), (int) o[1], (int) o[2]);
+        g.setColor(new Color(0xffd700));
+        for (double[] c : coins) g.fillOval((int) c[0] - 12, (int) c[1] - 12, 24, 24);
+        g.setColor(new Color(0x2ecc71));
+        g.fillRect(40, (int) playerY, 24, 24);
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("SansSerif", Font.PLAIN, 16));
+        g.drawString("Score: " + score + "   Best: " + best, 10, 24);
+        if (gameOver) {
+            g.setColor(new Color(0, 0, 0, 128));
+            g.fillRect(0, 0, W, H);
+            g.setColor(Color.WHITE);
+            g.setFont(new Font("SansSerif", Font.PLAIN, 20));
+            String s = "Game Over - Space or click to restart";
+            g.drawString(s, (W - g.getFontMetrics().stringWidth(s)) / 2, H / 2);
+        }
+    }
+}
+`;
+
 export const COIN_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAiUlEQVR4nGNgGOqAkRhFO9q4/2MT96j6SlA/IzkGk2IRIzGGu3t/xapm51ZugpYw4jMcl8G4LMJmCROlhiOrxRakTJQaTsgSDB9QGzBRw/X4fEE/H9AKMNHM5OFngQc0FyJnf1IBthxN3yDyoMAXO3GURxg+IMeSnXgKu4EprulS4VCrymQY8gAA1ldPIgEVzBEAAAAASUVORK5CYII=";
 

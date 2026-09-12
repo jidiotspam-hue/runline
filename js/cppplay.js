@@ -77,9 +77,12 @@ function patchFetchForToolchain() {
   globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input && input.url;
     if (url && url.startsWith(CC_BASE) && BIG_FILES.some((n) => url.endsWith(n))) {
-      const cache = await caches.open(CACHE_NAME);
-      const hit = await cache.match(url);
-      if (hit) return hit;
+      try {
+        const hit = await (await caches.open(CACHE_NAME)).match(url);
+        if (hit) return hit;
+      } catch {
+        /* Cache API unavailable (insecure context) — fall through to the network */
+      }
     }
     return orig(input, init);
   };
@@ -87,7 +90,12 @@ function patchFetchForToolchain() {
 
 async function prefetchToolchain(onProgress) {
   if (!("caches" in globalThis)) return;
-  const cache = await caches.open(CACHE_NAME);
+  let cache;
+  try {
+    cache = await caches.open(CACHE_NAME);
+  } catch {
+    return;
+  }
   let downloaded = 0;
   let total = 0;
   const missing = [];
@@ -129,6 +137,8 @@ export class CppPlay {
     this.onError = onError || (() => {});
     this.onStopped = onStopped || (() => {});
     this.toolchain = null;
+    this.loading = null;
+    this.compiling = null;
     this.generation = 0;
     this.active = false;
     this.moduleCache = new Map(); // source -> compiled WebAssembly.Module
@@ -138,14 +148,19 @@ export class CppPlay {
     return this.active;
   }
 
-  async ensureLoaded() {
-    if (this.toolchain) return this.toolchain;
-    patchFetchForToolchain();
-    await prefetchToolchain(this.onStatus);
-    this.onStatus("Loading C++ compiler…");
-    const [cc, shim] = await Promise.all([import(CC_BASE + "index.js"), import(WASI_SHIM)]);
-    this.toolchain = { cc, shim };
-    return this.toolchain;
+  ensureLoaded() {
+    if (this.toolchain) return Promise.resolve(this.toolchain);
+    if (this.loading) return this.loading;
+    this.loading = (async () => {
+      patchFetchForToolchain();
+      await prefetchToolchain(this.onStatus);
+      this.onStatus("Loading C++ compiler…");
+      const [cc, shim] = await Promise.all([import(CC_BASE + "index.js"), import(WASI_SHIM)]);
+      this.toolchain = { cc, shim };
+      return this.toolchain;
+    })();
+    this.loading.catch(() => (this.loading = null));
+    return this.loading;
   }
 
   stop() {
@@ -160,14 +175,16 @@ export class CppPlay {
     const cached = this.moduleCache.get(source);
     if (cached) return { module: cached, compileOutput: "" };
     const { cc } = await this.ensureLoaded();
+    if (this.compiling) await this.compiling.catch(() => {}); // clang isn't re-entrant
     this.onStatus("Compiling C++…");
-    const result = await cc.compile({
+    this.compiling = cc.compile({
       source,
       fileName: "main.cpp",
       // The sysroot's libc++ is built without exception support, so match it.
       flags: ["-std=c++20", "-O2", "-fno-exceptions"],
       extraFiles: { "runline.h": RUNLINE_H },
     });
+    const result = await this.compiling.finally(() => (this.compiling = null));
     if (result.module) {
       this.moduleCache.clear();
       this.moduleCache.set(source, result.module);
@@ -185,7 +202,7 @@ export class CppPlay {
     const str = (ptr) => {
       const mem = new Uint8Array(getMemory().buffer);
       let end = ptr;
-      while (mem[end] !== 0) end++;
+      while (end < mem.length && mem[end] !== 0) end++;
       return new TextDecoder().decode(mem.subarray(ptr, end));
     };
     let last = performance.now();
@@ -245,11 +262,12 @@ export class CppPlay {
     }
 
     const { WASI, File, OpenFile, ConsoleStdout, WASIProcExit } = this.toolchain.shim;
-    const dec = new TextDecoder();
+    const out = new TextDecoder();
+    const err = new TextDecoder();
     const fds = [
       new OpenFile(new File(new Uint8Array(0))),
-      new ConsoleStdout((d) => this.onOutput(dec.decode(d))),
-      new ConsoleStdout((d) => this.onOutput(dec.decode(d))),
+      new ConsoleStdout((d) => this.onOutput(out.decode(d, { stream: true }))),
+      new ConsoleStdout((d) => this.onOutput(err.decode(d, { stream: true }))),
     ];
     const wasi = new WASI(["main"], [], fds);
     let instance;

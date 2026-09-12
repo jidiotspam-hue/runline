@@ -103,12 +103,16 @@
 
     <div id="play-wrap" hidden>
       <canvas id="play-canvas" width="480" height="320" tabindex="0"></canvas>
+      <div id="java-wrap" hidden></div>
       <p id="play-hint">Click the game to give it keyboard focus.</p>
       <pre id="play-out" hidden></pre>
       <pre id="play-error" hidden></pre>
     </div>
   </section>
 </main>
+
+<!-- CheerpJ (Java) writes the compiler JVM's stdout/stderr here; text only, never children. -->
+<pre id="console" hidden></pre>
 
 <div id="modal" hidden>
   <div class="modal-card">
@@ -122,6 +126,7 @@
         <li><b>HTML / JS</b> — a whole project (HTML, CSS, JS, images, sounds) previews live in a sandboxed frame. Nothing leaves your browser.</li>
         <li><b>Python · Play</b> — real Python (Pyodide/WebAssembly) running in your browser, drawing to a canvas. Great for animated games.</li>
         <li><b>C++ · Play</b> — clang compiles your program to WebAssembly <i>in the browser</i> (first use downloads the ~28 MB compiler once) and runs it against the same canvas API. Needs Chrome 137+.</li>
+        <li><b>Java · Play</b> — the real <code>javac</code> runs inside <a href="https://cheerpj.com" target="_blank" rel="noopener">CheerpJ</a> (a JVM in WebAssembly), then your program runs with full Swing/AWT: <code>JFrame</code>, <code>JPanel</code>, <code>javax.swing.Timer</code>, key and mouse listeners. Java 8. First use downloads ~17 MB; click the Java window to give it the keyboard. No <code>System.in</code> in Play mode — use Console for that.</li>
         <li><b>Console mode (Python, Java, C++)</b> — compiled and run by the free Judge0 service. Type input lines under the output to play text games; each line re-runs the program with everything typed so far, so keep programs deterministic (fixed secrets, seeded random) for the transcript to line up.</li>
       </ul>
 
@@ -158,6 +163,9 @@
 
       <h3>Shortcuts</h3>
       <p><code>Ctrl/⌘ + Enter</code> run · <code>Ctrl/⌘ + S</code> download current file · double-click a file to rename it.</p>
+
+      <h3>Credits</h3>
+      <p>Powered by <a href="https://codemirror.net" target="_blank" rel="noopener">CodeMirror</a>, <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>, <a href="https://github.com/BertalanD/browsercc" target="_blank" rel="noopener">browsercc</a> (clang/LLVM), <a href="https://cheerpj.com" target="_blank" rel="noopener">CheerpJ</a> by Leaning Tech (Community Edition), <a href="https://judge0.com" target="_blank" rel="noopener">Judge0</a> and <a href="https://stuk.github.io/jszip/" target="_blank" rel="noopener">JSZip</a>. Source: <a href="https://github.com/jidiotspam-hue/runline" target="_blank" rel="noopener">github.com/jidiotspam-hue/runline</a>.</p>
     </div>
   </div>
 </div>
