@@ -11,6 +11,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   margin: 0;
@@ -64,6 +66,63 @@ button.primary:hover { background: var(--accent); }
   color: var(--muted);
 }
 
+.file-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.file-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #2b2d3d;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.file-tab.active {
+  background: #33354a;
+  color: var(--text);
+  border-color: var(--accent-dark);
+}
+
+.file-tab-close {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+.file-tab-close:hover {
+  color: var(--error);
+  background: rgba(255, 107, 107, 0.15);
+}
+
+.mode-toggle {
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.mode-btn {
+  border: none;
+  border-radius: 0;
+  background: #2b2d3d;
+  color: var(--muted);
+}
+
+.mode-btn.active {
+  background: var(--accent-dark);
+  color: #08120c;
+  font-weight: 600;
+}
+
 .workspace {
   display: flex;
   height: calc(100vh - 53px);
@@ -78,11 +137,32 @@ button.primary:hover { background: var(--accent); }
 
 .editor-pane {
   border-right: 1px solid var(--border);
+  position: relative;
 }
 
 .CodeMirror {
   height: 100%;
   font-size: 14px;
+}
+
+#asset-preview {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#asset-preview img {
+  max-width: 90%;
+  max-height: 60%;
+  image-rendering: pixelated;
+  background: repeating-conic-gradient(#3b3d4d 0% 25%, #2b2d3d 0% 50%) 50% / 16px 16px;
+  border: 1px solid var(--border);
 }
 
 .output-pane {
@@ -124,16 +204,46 @@ button.primary:hover { background: var(--accent); }
 #output-text .stderr { color: var(--error); }
 #output-text .meta { color: var(--muted); }
 
+#play-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  overflow: auto;
+}
+
+#play-canvas {
+  background: #000;
+  border: 1px solid var(--border);
+  max-width: 100%;
+  max-height: 70%;
+}
+
+#play-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+#play-error {
+  margin: 0;
+  color: var(--error);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 30%;
+  overflow: auto;
+}
+
 #stdin-wrap {
   border-top: 1px solid var(--border);
   padding: 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-
-#stdin-wrap[hidden] {
-  display: none;
 }
 
 #stdin-wrap label {
@@ -161,5 +271,5 @@ button.primary:hover { background: var(--accent); }
   .editor-pane, .output-pane { flex: none; }
   .editor-pane { border-right: none; border-bottom: 1px solid var(--border); }
   .CodeMirror { height: 46vh; }
-  #output-text, #preview-frame { height: 40vh; }
+  #output-text, #preview-frame, #play-wrap { height: 40vh; }
 }
