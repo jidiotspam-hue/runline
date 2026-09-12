@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>runline</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/dracula.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="toolbar">
+  <div class="brand">runline</div>
+
+  <select id="lang-select">
+    <option value="html">HTML</option>
+    <option value="python">Python</option>
+    <option value="java">Java</option>
+    <option value="cpp">C++</option>
+  </select>
+
+  <button id="btn-new">New</button>
+  <button id="btn-open">Open</button>
+  <input type="file" id="file-input" hidden accept=".html,.htm,.py,.java,.cpp,.cc,.cxx,.txt">
+  <button id="btn-save">Save</button>
+  <button id="btn-run" class="primary">Run ▶</button>
+
+  <span id="runtime-status" class="status"></span>
+</header>
+
+<main class="workspace">
+  <section class="editor-pane">
+    <textarea id="editor"></textarea>
+  </section>
+
+  <section class="output-pane">
+    <div class="output-tabs">
+      <span id="output-label">Output</span>
+      <button id="btn-clear-output" title="Clear output">Clear</button>
+    </div>
+
+    <iframe id="preview-frame" sandbox="allow-scripts allow-modals" hidden></iframe>
+
+    <pre id="output-text" hidden></pre>
+
+    <div id="stdin-wrap" hidden>
+      <label for="stdin-box">stdin</label>
+      <textarea id="stdin-box" placeholder="Input for the program (optional)"></textarea>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/css/css.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
